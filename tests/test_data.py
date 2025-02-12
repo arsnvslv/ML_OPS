@@ -6,3 +6,6 @@ with open('titanic/train_data.json', 'r') as file:
 
 dataset = Dataset(**data)
 
+dataset = dataset.to_dataframe()
+
+print(dataset.head())
