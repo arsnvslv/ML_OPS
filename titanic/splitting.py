@@ -21,9 +21,17 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # Формирование JSON-структур
-data_train = {"X": X_train.to_dict(orient="records"), "y": y_train.to_dict()}
-data_test = {"X": X_test.to_dict(orient="records")}
-data_eval = {"X": X_test.to_dict(orient="records"), "y": y_test.to_dict()}
+data_train = {
+    "X": X_train.to_dict(orient="records"),
+    "y": y_train.set_axis(X_train["PassengerId"].values).to_dict()
+}
+data_test = {
+    "X": X_test.to_dict(orient="records")
+}
+data_eval = {
+    "X": X_test.to_dict(orient="records"),
+    "y": y_test.set_axis(X_test["PassengerId"].values).to_dict()
+}
 
 # Сохранение данных в JSON-файлы
 with open("titanic/train_data.json", "w") as file:
