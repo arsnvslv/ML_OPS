@@ -54,26 +54,6 @@ app = FastAPI()
                 ),
                 "example": 10
             },
-            {
-                "in": "query",
-                "name": "iterations",
-                "schema": {"type": "integer", "minimum": 1},
-                "description": (
-                    "Количество итераций для CatBoost. Если используется RandomForest — игнорируется. "
-                    "Для остальных моделей смотрите /train/available_models."
-                ),
-                "example": 1000
-            },
-            {
-                "in": "query",
-                "name": "depth",
-                "schema": {"type": "integer", "minimum": 1},
-                "description": (
-                    "Глубина дерева для CatBoost. Если используется RandomForest — игнорируется. "
-                    "Для остальных моделей смотрите /train/available_models."
-                ),
-                "example": 6
-            }
         ],
         "requestBody": {
             "content": {
@@ -85,11 +65,11 @@ app = FastAPI()
                                 "Pclass": 3,
                                 "Name": "Braund, Mr. Owen Harris",
                                 "Sex": "male",
-                                "Age": 22,
+                                "Age": "22",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "A/5 21171",
-                                "Fare": 7.25,
+                                "Fare": "7.25",
                                 "Cabin": "",
                                 "Embarked": "S"
                             },
@@ -98,11 +78,11 @@ app = FastAPI()
                                 "Pclass": 1,
                                 "Name": "Cumings, Mrs. John Bradley (Florence Briggs)",
                                 "Sex": "female",
-                                "Age": 38,
+                                "Age": "38",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "PC 17599",
-                                "Fare": 71.2833,
+                                "Fare": "71.2833",
                                 "Cabin": "C85",
                                 "Embarked": "C"
                             }
@@ -168,112 +148,6 @@ async def train_model_endpoint(
     summary="Предсказание по модели",
     tags=["Prediction"],
     responses={
-        422: {"description": "Ошибка валидации входных данных"},
-        400: {"description": "Некорректный формат запроса или модель не найдена"}
-    },
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "example": {
-                        "X": [
-                            {
-                                "PassengerId": 1,
-                                "Pclass": 3,
-                                "Name": "Braund, Mr. Owen Harris",
-                                "Sex": "male",
-                                "Age": 22,
-                                "SibSp": 1,
-                                "Parch": 0,
-                                "Ticket": "A/5 21171",
-                                "Fare": 7.25,
-                                "Cabin": "",
-                                "Embarked": "S"
-                            },
-                            {
-                                "PassengerId": 2,
-                                "Pclass": 1,
-                                "Name": "Cumings, Mrs. John Bradley (Florence Briggs)",
-                                "Sex": "female",
-                                "Age": 38,
-                                "SibSp": 1,
-                                "Parch": 0,
-                                "Ticket": "PC 17599",
-                                "Fare": 71.2833,
-                                "Cabin": "C85",
-                                "Embarked": "C"
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }
-)
-async def predict_endpoint(
-    model_name: str = Query(..., description="Имя модели для предсказания", example="catboost_20250213_042111.pkl"),
-    request: Request = None  # оставляем валидацию через Request
-):
-    try:
-        json_data = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Некорректный JSON в теле запроса")
-
-    # Удаляем 'y', если он присутствует
-    if isinstance(json_data, dict) and "y" in json_data:
-        json_data.pop("y")
-
-    try:
-        dataset = Dataset(**json_data)
-    except ValidationError as e:
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "Ошибка в данных", "details": e.errors()}
-        )
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ошибка обработки входных данных для предсказания.")
-
-    model_type = model_name.split("_")[0]
-    model_handler = MODEL_REGISTRY.get(model_type)
-    if model_handler is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Тип модели '{model_type}' не поддерживается."
-        )
-
-    model_path = os.path.join("models", model_name)
-    if not os.path.exists(model_path):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Модель '{model_name}' не найдена."
-        )
-
-    model = model_handler.load_model(model_name)
-    df = dataset.to_dataframe()
-    predictions = model.predict(df)
-    if not isinstance(predictions, list):
-        predictions = list(predictions)
-
-    converted_predictions = []
-    for pred in predictions:
-        if isinstance(pred, (np.integer,)):
-            converted_predictions.append(int(pred))
-        elif isinstance(pred, (np.floating,)):
-            converted_predictions.append(float(pred))
-        else:
-            converted_predictions.append(pred)
-
-    passenger_ids = [passenger.PassengerId for passenger in dataset.X]
-    prediction_dict = {int(pid): pred for pid, pred in zip(passenger_ids, converted_predictions)}
-
-    return {"predictions": prediction_dict}
-
-
-@app.post(
-    "/predict",
-    summary="Предсказание по модели",
-    tags=["Prediction"],
-    responses={
         200: {
             "description": "Успешное предсказание",
             "content": {
@@ -301,11 +175,11 @@ async def predict_endpoint(
                                 "Pclass": 3,
                                 "Name": "Braund, Mr. Owen Harris",
                                 "Sex": "male",
-                                "Age": 22,
+                                "Age": "22",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "A/5 21171",
-                                "Fare": 7.25,
+                                "Fare": "7.25",
                                 "Cabin": "",
                                 "Embarked": "S"
                             },
@@ -314,11 +188,11 @@ async def predict_endpoint(
                                 "Pclass": 1,
                                 "Name": "Cumings, Mrs. John Bradley (Florence Briggs)",
                                 "Sex": "female",
-                                "Age": 38,
+                                "Age": "38",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "PC 17599",
-                                "Fare": 71.2833,
+                                "Fare": "71.2833",
                                 "Cabin": "C85",
                                 "Embarked": "C"
                             }
@@ -419,11 +293,11 @@ async def predict_endpoint(
                                 "Pclass": 3,
                                 "Name": "Braund, Mr. Owen Harris",
                                 "Sex": "male",
-                                "Age": 22,
+                                "Age": "22",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "A/5 21171",
-                                "Fare": 7.25,
+                                "Fare": "7.25",
                                 "Cabin": "",
                                 "Embarked": "S"
                             },
@@ -432,11 +306,11 @@ async def predict_endpoint(
                                 "Pclass": 1,
                                 "Name": "Cumings, Mrs. John Bradley (Florence Briggs)",
                                 "Sex": "female",
-                                "Age": 38,
+                                "Age": "38",
                                 "SibSp": 1,
                                 "Parch": 0,
                                 "Ticket": "PC 17599",
-                                "Fare": 71.2833,
+                                "Fare": "71.2833",
                                 "Cabin": "C85",
                                 "Embarked": "C"
                             }
@@ -650,18 +524,6 @@ async def list_models():
         },
         404: {"description": "Модель не найдена"},
         500: {"description": "Ошибка при удалении модели"}
-    },
-    openapi_extra={
-        "parameters": [
-            {
-                "in": "query",
-                "name": "model_name",
-                "required": True,
-                "schema": {"type": "string"},
-                "description": "Имя модели для удаления. Пример: rf_20250213_042111.pkl",
-                "example": "rf_20250213_042111.pkl"
-            }
-        ]
     }
 )
 async def delete_model_endpoint(model_name: str):

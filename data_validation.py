@@ -9,11 +9,11 @@ class Passenger(BaseModel):
     Pclass: int
     Name: str
     Sex: str
-    Age: Union[float, str]
+    Age: str
     SibSp: int
     Parch: int
     Ticket: str
-    Fare: Union[float, str]
+    Fare: str
     Cabin: str
     Embarked: str
 

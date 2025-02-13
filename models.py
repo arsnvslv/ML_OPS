@@ -45,6 +45,9 @@ class RandomForestParams(BaseModel):
     max_depth: Optional[int] = Field(10, gt=0, description="Максимальная глубина дерева")
     random_state: int = Field(42, description="Сид генератора случайных чисел")
 
+    class Config:
+        extra = "forbid"
+
 
 @register_model_handler("rf")
 class RandomForestHandler(BaseMlModel):
@@ -103,6 +106,9 @@ class CatBoostParams(BaseModel):
     learning_rate: Optional[float] = Field(None, gt=0, description="Скорость обучения")
     random_seed: int = Field(42, description="Сид генератора случайных чисел")
     verbose: bool = Field(False, description="Выводить ли промежуточные результаты")
+
+    class Config:
+        extra = "forbid"
 
 
 # Регистрация обработчика (используем тот же декоратор register_model_handler)

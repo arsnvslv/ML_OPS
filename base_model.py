@@ -46,11 +46,14 @@ class BaseMlModel(ABC):
         1. Фитит preprocessor и обрабатывает данные.
         2. Вызывает _train() для обучения модели на обработанных данных.
         """
+        # Преобразуем колонки Age и Fare в числовой тип
+        data["Age"] = pd.to_numeric(data["Age"], errors='coerce')
+        data["Fare"] = pd.to_numeric(data["Fare"], errors='coerce')
+
         X = data.drop(columns=['Survived'])
         y = data['Survived']
         X_processed = self.preprocessor.fit_transform(X)
         result = self._train(X_processed, y, params)
-        # Получаем объект для сохранения (например, Pipeline для sklearn‑моделей)
         return result
 
     @abstractmethod

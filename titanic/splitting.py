@@ -20,16 +20,27 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
+# Функция для приведения полей Age и Fare к строке
+def convert_age_fare_to_str(records):
+    for record in records:
+        # Приводим Age к строке, если значение не строковое
+        if record.get("Age") is not None and not isinstance(record["Age"], str):
+            record["Age"] = str(record["Age"])
+        # Приводим Fare к строке, если значение не строковое
+        if record.get("Fare") is not None and not isinstance(record["Fare"], str):
+            record["Fare"] = str(record["Fare"])
+    return records
+
 # Формирование JSON-структур
 data_train = {
-    "X": X_train.to_dict(orient="records"),
+    "X": convert_age_fare_to_str(X_train.to_dict(orient="records")),
     "y": y_train.set_axis(X_train["PassengerId"].values).to_dict()
 }
 data_test = {
-    "X": X_test.to_dict(orient="records")
+    "X": convert_age_fare_to_str(X_test.to_dict(orient="records"))
 }
 data_eval = {
-    "X": X_test.to_dict(orient="records"),
+    "X": convert_age_fare_to_str(X_test.to_dict(orient="records")),
     "y": y_test.set_axis(X_test["PassengerId"].values).to_dict()
 }
 
@@ -44,3 +55,4 @@ with open("titanic/eval_data.json", "w") as file:
     json.dump(data_eval, file)
 
 print('Data was successfully splitted!')
+
