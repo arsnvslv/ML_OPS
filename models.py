@@ -2,7 +2,7 @@ from base_model import BaseMlModel
 
 import os
 from datetime import datetime
-from typing import Type, Dict, Any, List
+from typing import Type, Dict, Any, Optional,List
 
 import joblib
 from pydantic import BaseModel, Field
@@ -41,15 +41,14 @@ def register_model_handler(model_type: str):
 
 
 class RandomForestParams(BaseModel):
-    n_estimators: int = Field(..., gt=0, description="Количество деревьев")
-    max_depth: int = Field(..., gt=0, description="Максимальная глубина дерева")
+    n_estimators: Optional[int] = Field(100, gt=0, description="Количество деревьев")
+    max_depth: Optional[int] = Field(10, gt=0, description="Максимальная глубина дерева")
     random_state: int = Field(42, description="Сид генератора случайных чисел")
-
 
 @register_model_handler("rf")
 class RandomForestHandler(BaseMlModel):
     """
-    Обработчик для модели RandomForest (scikit-learn).
+    Модель Random Forest.
     """
     params_schema = RandomForestParams
 
@@ -79,25 +78,24 @@ class RandomForestHandler(BaseMlModel):
     @classmethod
     def load_model(cls, model_name: str) -> Pipeline:
         model_path = os.path.join("models", model_name)
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Модель '{model_name}' не найдена")
         return joblib.load(model_path)
 
 
 # Pydantic-схема гиперпараметров для CatBoost
 class CatBoostParams(BaseModel):
-    iterations: int = Field(..., gt=0, description="Количество итераций обучения")
-    depth: int = Field(..., gt=0, description="Глубина дерева")
-    learning_rate: float = Field(..., gt=0, description="Скорость обучения")
+    iterations: Optional[int] = Field(None, gt=0, description="Количество итераций обучения")
+    depth: Optional[int] = Field(None, gt=0, description="Глубина дерева")
+    learning_rate: Optional[float] = Field(None, gt=0, description="Скорость обучения")
     random_seed: int = Field(42, description="Сид генератора случайных чисел")
     verbose: bool = Field(False, description="Выводить ли промежуточные результаты")
+
 
 
 # Регистрация обработчика (используем тот же декоратор register_model_handler)
 @register_model_handler("catboost")
 class CatBoost(BaseMlModel):
     """
-    Обработчик для модели CatBoost.
+    Модель CatBoost.
     """
     params_schema = CatBoostParams
 
@@ -113,8 +111,6 @@ class CatBoost(BaseMlModel):
         return {"accuracy": acc, "model_prefix": "catboost"}
 
     def _predict(self, X) -> List[Any]:
-        if self.model is None:
-            raise ValueError("Модель не обучена!")
         return self.model.predict(X).tolist()
 
 
@@ -133,6 +129,4 @@ class CatBoost(BaseMlModel):
     @classmethod
     def load_model(cls, model_name: str) -> Pipeline:
         model_path = os.path.join("models", model_name)
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Модель '{model_name}' не найдена")
         return joblib.load(model_path)
