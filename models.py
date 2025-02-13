@@ -45,11 +45,10 @@ class RandomForestParams(BaseModel):
     max_depth: Optional[int] = Field(10, gt=0, description="Максимальная глубина дерева")
     random_state: int = Field(42, description="Сид генератора случайных чисел")
 
+
 @register_model_handler("rf")
 class RandomForestHandler(BaseMlModel):
-    """
-    Модель Random Forest.
-    """
+    """Модель Random Forest"""
     params_schema = RandomForestParams
 
     def _train(self, X, y, params: dict) -> Dict[str, Any]:
@@ -58,6 +57,8 @@ class RandomForestHandler(BaseMlModel):
         self.model = clf
         preds = clf.predict(X)
         acc = accuracy_score(y, preds)
+        # Сохраняем параметры для возможного переобучения
+        self.trained_params = params
         return {"accuracy": acc, "model_prefix": "rf"}
 
     def _predict(self, X) -> List[Any]:
@@ -68,17 +69,31 @@ class RandomForestHandler(BaseMlModel):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = f"{model_prefix}_{timestamp}.pkl"
         model_path = os.path.join("models", model_name)
+        # Создаём пайплайн с препроцессором и моделью
         pipeline = Pipeline(steps=[
             ('preprocessor', self.preprocessor),
             ('classifier', self.model)
         ])
-        joblib.dump(pipeline, model_path)
+        # Сохраняем пайплайн и обучающие параметры в один объект
+        model_info = {
+            "pipeline": pipeline,
+            "trained_params": self.trained_params if hasattr(self, "trained_params") else None
+        }
+        joblib.dump(model_info, model_path)
         return model_name
 
     @classmethod
-    def load_model(cls, model_name: str) -> Pipeline:
+    def load_model(cls, model_name: str) -> "RandomForestHandler":
         model_path = os.path.join("models", model_name)
-        return joblib.load(model_path)
+        model_info = joblib.load(model_path)
+        # Создаём новый экземпляр обработчика
+        instance = cls()
+        pipeline: Pipeline = model_info.get("pipeline")
+        # Восстанавливаем preprocessor и модель из пайплайна
+        instance.preprocessor = pipeline.named_steps["preprocessor"]
+        instance.model = pipeline.named_steps["classifier"]
+        instance.trained_params = model_info.get("trained_params")
+        return instance
 
 
 # Pydantic-схема гиперпараметров для CatBoost
@@ -90,43 +105,50 @@ class CatBoostParams(BaseModel):
     verbose: bool = Field(False, description="Выводить ли промежуточные результаты")
 
 
-
 # Регистрация обработчика (используем тот же декоратор register_model_handler)
 @register_model_handler("catboost")
 class CatBoost(BaseMlModel):
-    """
-    Модель CatBoost.
-    """
+    """Модель CatBoost"""
     params_schema = CatBoostParams
 
     def _train(self, X, y, params: dict) -> Dict[str, Any]:
-        # Создаём модель с переданными параметрами
         model = CatBoostClassifier(**params)
-        # Обучаем модель; параметр verbose можно передать из params
         model.fit(X, y, verbose=params.get("verbose", False))
         self.model = model
         preds = model.predict(X)
         from sklearn.metrics import accuracy_score
         acc = accuracy_score(y, preds)
+        # Сохраняем параметры для переобучения
+        self.trained_params = params
         return {"accuracy": acc, "model_prefix": "catboost"}
 
     def _predict(self, X) -> List[Any]:
         return self.model.predict(X).tolist()
 
-
     def save_model(self, model_prefix: str) -> str:
         os.makedirs("models", exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = f"{model_prefix}_{timestamp}.pkl"
+        model_path = os.path.join("models", model_name)
         pipeline = Pipeline(steps=[
             ('preprocessor', self.preprocessor),
             ('classifier', self.model)
         ])
-        model_path = os.path.join("models", model_name)
-        joblib.dump(pipeline, model_path)
+        model_info = {
+            "pipeline": pipeline,
+            "trained_params": self.trained_params if hasattr(self, "trained_params") else None
+        }
+        joblib.dump(model_info, model_path)
         return model_name
 
     @classmethod
-    def load_model(cls, model_name: str) -> Pipeline:
+    def load_model(cls, model_name: str) -> "CatBoost":
         model_path = os.path.join("models", model_name)
-        return joblib.load(model_path)
+        model_info = joblib.load(model_path)
+        instance = cls()
+        pipeline: Pipeline = model_info.get("pipeline")
+        instance.preprocessor = pipeline.named_steps["preprocessor"]
+        instance.model = pipeline.named_steps["classifier"]
+        instance.trained_params = model_info.get("trained_params")
+        return instance
+

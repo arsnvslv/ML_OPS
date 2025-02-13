@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Type
 
 import pandas as pd
+from pydantic import BaseModel
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -16,8 +17,6 @@ class BaseMlModel(ABC):
     абстрактные методы _train() и _predict(), реализуемые в потомках.
 
     Абстрактные методы:
-      - build_pipeline(): возвращает объект для сохранения модели.
-         Для sklearn‑моделей – обычно Pipeline, для других – может быть любая структура.
       - save_model(): сохраняет полученный объект.
       - load_model(): загружает сохранённую модель.
     """
@@ -25,6 +24,7 @@ class BaseMlModel(ABC):
     numeric_features = ['Age', 'SibSp', 'Parch', 'Fare']
     categorical_features = ['Pclass', 'Sex', 'Ticket', 'Cabin', 'Embarked']
 
+    params_schema: Type[BaseModel]
     def __init__(self):
         self.preprocessor = ColumnTransformer(
             transformers=[
