@@ -1,0 +1,1 @@
+model_prefix = result.get("model_prefix", "model")
