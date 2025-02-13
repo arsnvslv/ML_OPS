@@ -31,10 +31,10 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.StreamHandler(),  # Вывод в консоль
-        # Если требуется, можно добавить FileHandler для записи в файл
+        logging.FileHandler("grpc_server.log", encoding="utf-8"),
     ]
 )
+
 
 def proto_passenger_to_dict(proto_passenger):
     """

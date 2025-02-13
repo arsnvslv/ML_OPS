@@ -1,5 +1,5 @@
 from pydantic import BaseModel, model_validator
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict
 import pandas as pd
 
 

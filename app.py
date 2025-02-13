@@ -1,16 +1,48 @@
+"""
+FastAPI-сервис для работы с моделями машинного обучения.
+
+Эндпоинты позволяют:
+- обучать модель (/train/{model_type}),
+- делать предсказание (/predict),
+- переобучать модель (/retrain),
+- получать список доступных моделей (/train/available_models),
+- получать список обученных моделей (/trained_models),
+- удалять модель (/delete_model),
+- проверять состояние системы (/health).
+
+Логирование важных событий выполняется с помощью стандартного модуля logging.
+Логи записываются в файл 'fastapi_app.log' (а также выводятся в консоль).
+"""
+
+import os
+import json
+import logging
+import numpy as np
+
+from fastapi import FastAPI, HTTPException, Request, Query, Path
+from pydantic import ValidationError
+import uvicorn
+
 from models import MODEL_REGISTRY
 from data_validation import Dataset
 from health import check_system_health
 
-from fastapi import FastAPI, HTTPException, Request, Query,Path
-import uvicorn
+# Настройка логирования: записи в файл и вывод в консоль.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("fastapi_app.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
-from pydantic import ValidationError
-import json
-import os
-import numpy as np
+app = FastAPI(
+    title="ML Models Service API",
+    description="API для обучения, предсказания, переобучения и управления моделями машинного обучения.",
+    version="1.0.0"
+)
 
-app = FastAPI()
 
 @app.post(
     "/train/{model_type}",
@@ -105,43 +137,65 @@ async def train_model_endpoint(
     ),
     request: Request = None
 ):
-    # Валидация доступности модели
+    """
+    Эндпоинт для обучения модели.
+
+    Параметры для обучения передаются через query-параметры,
+    а обучающие данные – в теле запроса (JSON).
+    """
+    logging.info("Получен запрос на обучение модели типа '%s'", model_type)
+
     if model_type not in MODEL_REGISTRY:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Тип модели '{model_type}' не поддерживается. Доступные модели: {', '.join(MODEL_REGISTRY.keys())}."
-        )
+        err = f"Тип модели '{model_type}' не поддерживается. Доступные модели: {', '.join(MODEL_REGISTRY.keys())}."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     query_params = dict(request.query_params)
     handler_cls = MODEL_REGISTRY.get(model_type)
     try:
         validated_params = handler_cls.params_schema(**query_params)
+        logging.info("Параметры модели успешно валидированы: %s", validated_params.dict())
     except ValidationError as e:
+        logging.error("Ошибка валидации параметров модели: %s", e.errors())
         raise HTTPException(
             status_code=422,
             detail={"error": "Ошибка в параметрах модели", "details": e.errors()}
         )
+
     try:
         body = await request.json()
         dataset = Dataset(**body)
         df = dataset.to_dataframe()
         if dataset.y is None:
-            raise HTTPException(status_code=422, detail="Отсутствует целевая переменная 'y' в данных.")
+            err = "Отсутствует целевая переменная 'y' в данных."
+            logging.error(err)
+            raise HTTPException(status_code=422, detail=err)
+        logging.info("Данные успешно получены и валидированы для обучения.")
     except ValidationError as e:
+        logging.error("Ошибка валидации данных: %s", e.errors())
         raise HTTPException(
             status_code=422,
             detail={"error": "Ошибка в данных", "details": e.errors()}
         )
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Некорректный JSON в теле запроса")
+        err = "Некорректный JSON в теле запроса."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     model = handler_cls()
-    result = model.train(df, validated_params.dict())
-    model_prefix = result.get("model_prefix", "model")
-    model_name = model.save_model(model_prefix)
-    result["model_name"] = model_name
+    try:
+        result = model.train(df, validated_params.dict())
+        model_prefix = result.get("model_prefix", "model")
+        model_name = model.save_model(model_prefix)
+        result["model_name"] = model_name
+        logging.info("Модель успешно обучена и сохранена под именем: %s", model_name)
+    except Exception as e:
+        err = f"Ошибка при обучении модели: {str(e)}"
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
     return result
+
 
 @app.post(
     "/predict",
@@ -207,56 +261,78 @@ async def predict_endpoint(
     model_name: str = Query(..., description="Имя модели для предсказания", example="catboost_20250213_042111.pkl"),
     request: Request = None
 ):
+    """
+    Эндпоинт для предсказания.
+
+    Принимает имя модели (query-параметр) и данные для предсказания в теле запроса.
+    Если в данных присутствует ключ "y", он будет удалён.
+    """
+    logging.info("Получен запрос на предсказание для модели: %s", model_name)
     try:
         json_data = await request.json()
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Некорректный JSON в теле запроса")
+        err = "Некорректный JSON в теле запроса."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     if isinstance(json_data, dict) and "y" in json_data:
         json_data.pop("y")
+        logging.info("Ключ 'y' удалён из входных данных для предсказания.")
 
     try:
         dataset = Dataset(**json_data)
+        logging.info("Данные для предсказания успешно валидированы.")
     except ValidationError as e:
+        logging.error("Ошибка валидации данных для предсказания: %s", e.errors())
         raise HTTPException(
             status_code=422,
             detail={"error": "Ошибка в данных", "details": e.errors()}
         )
     except Exception:
-        raise HTTPException(status_code=400, detail="Ошибка обработки входных данных для предсказания.")
+        err = "Ошибка обработки входных данных для предсказания."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
-    model_type = model_name.split("_")[0]
+    try:
+        model_type = model_name.split("_")[0]
+    except Exception:
+        err = "Некорректный формат имени модели."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
+
     model_handler = MODEL_REGISTRY.get(model_type)
     if model_handler is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Тип модели '{model_type}' не поддерживается."
-        )
+        err = f"Тип модели '{model_type}' не поддерживается."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     model_path = os.path.join("models", model_name)
     if not os.path.exists(model_path):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Модель '{model_name}' не найдена."
-        )
+        err = f"Модель '{model_name}' не найдена."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
-    model = model_handler.load_model(model_name)
-    df = dataset.to_dataframe()
-    predictions = model.predict(df)
-    if not isinstance(predictions, list):
-        predictions = list(predictions)
-
-    converted_predictions = []
-    for pred in predictions:
-        if isinstance(pred, (np.integer,)):
-            converted_predictions.append(int(pred))
-        elif isinstance(pred, (np.floating,)):
-            converted_predictions.append(float(pred))
-        else:
-            converted_predictions.append(pred)
-
-    passenger_ids = [passenger.PassengerId for passenger in dataset.X]
-    prediction_dict = {int(pid): pred for pid, pred in zip(passenger_ids, converted_predictions)}
+    try:
+        model = model_handler.load_model(model_name)
+        df = dataset.to_dataframe()
+        predictions = model.predict(df)
+        if not isinstance(predictions, list):
+            predictions = list(predictions)
+        converted_predictions = []
+        for pred in predictions:
+            if isinstance(pred, (np.integer,)):
+                converted_predictions.append(int(pred))
+            elif isinstance(pred, (np.floating,)):
+                converted_predictions.append(float(pred))
+            else:
+                converted_predictions.append(pred)
+        passenger_ids = [passenger.PassengerId for passenger in dataset.X]
+        prediction_dict = {int(pid): pred for pid, pred in zip(passenger_ids, converted_predictions)}
+        logging.info("Предсказание успешно выполнено для модели: %s", model_name)
+    except Exception as e:
+        err = f"Ошибка при предсказании: {str(e)}"
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
     return {"predictions": prediction_dict}
 
@@ -325,69 +401,79 @@ async def predict_endpoint(
         }
     }
 )
-async def retrain_model_endpoint(model_name: str = Query(..., description="Имя модели для переобучения",
-                                                         example="rf_20250213_155448.pkl"), request: Request = None):
+async def retrain_model_endpoint(
+    model_name: str = Query(..., description="Имя модели для переобучения", example="rf_20250213_155448.pkl"),
+    request: Request = None
+):
     """
-    Эндпоинт для переобучения уже обученной модели.
-    Имя модели передаётся через query-параметр `model_name`,
-    новые данные — в теле запроса.
-    Для переобучения используются сохранённые параметры модели.
+    Эндпоинт для переобучения модели.
+
+    Имя модели передаётся через query-параметр, новые данные – в теле запроса.
+    Переобучение проводится с использованием сохранённых параметров модели.
     """
-    # Валидация входных данных (ожидается JSON с данными для обучения)
+    logging.info("Получен запрос на переобучение модели: %s", model_name)
     try:
         body = await request.json()
         dataset = Dataset(**body)
         df = dataset.to_dataframe()
         if dataset.y is None:
-            raise HTTPException(status_code=422, detail="Отсутствует целевая переменная 'y' в данных.")
+            err = "Отсутствует целевая переменная 'y' в данных."
+            logging.error(err)
+            raise HTTPException(status_code=422, detail=err)
+        logging.info("Данные для переобучения успешно валидированы.")
     except ValidationError as e:
+        logging.error("Ошибка валидации данных для переобучения: %s", e.errors())
         raise HTTPException(
             status_code=422,
             detail={"error": "Ошибка в данных", "details": e.errors()}
         )
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Некорректный JSON в теле запроса")
+        err = "Некорректный JSON в теле запроса."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
-    # Определяем тип модели по префиксу в имени (например, 'rf' или 'catboost')
     try:
         model_type = model_name.split("_")[0]
     except Exception:
-        raise HTTPException(status_code=400, detail="Некорректный формат имени модели.")
+        err = "Некорректный формат имени модели."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     handler_cls = MODEL_REGISTRY.get(model_type)
     if handler_cls is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Тип модели '{model_type}' не поддерживается."
-        )
+        err = f"Тип модели '{model_type}' не поддерживается."
+        logging.error(err)
+        raise HTTPException(status_code=400, detail=err)
 
     model_path = os.path.join("models", model_name)
     if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail=f"Модель '{model_name}' не найдена.")
+        err = f"Модель '{model_name}' не найдена."
+        logging.error(err)
+        raise HTTPException(status_code=404, detail=err)
 
-    # Загружаем существующую модель
     try:
         model = handler_cls.load_model(model_name)
+        logging.info("Модель '%s' успешно загружена для переобучения.", model_name)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при загрузке модели: {str(e)}")
+        err = f"Ошибка при загрузке модели: {str(e)}"
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
-    # Проверяем наличие сохранённых обучающих параметров
     if not hasattr(model, "trained_params") or model.trained_params is None:
-        raise HTTPException(status_code=500, detail="Параметры модели не найдены для переобучения.")
+        err = "Параметры модели не найдены для переобучения."
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
-    # Переобучаем модель на новых данных, используя сохранённые параметры
     try:
         result = model.train(df, model.trained_params)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при переобучении модели: {str(e)}")
-
-    # Сохраняем переобученную модель (она будет сохранена с новым именем, основанным на префиксе)
-    try:
         new_model_name = model.save_model(model_prefix=model_type)
+        result["model_name"] = new_model_name
+        logging.info("Модель переобучена и сохранена под именем: %s", new_model_name)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при сохранении модели: {str(e)}")
+        err = f"Ошибка при переобучении модели: {str(e)}"
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
-    result["model_name"] = new_model_name
     return result
 
 
@@ -401,51 +487,50 @@ async def retrain_model_endpoint(model_name: str = Query(..., description="Им�
             "content": {
                 "application/json": {
                     "example": {
-                      "rf": {
-                        "description": "Модель Random Forest",
-                        "params_schema": {
-                          "properties": {
-                            "n_estimators": {
-                              "anyOf": [
-                                {
-                                  "exclusiveMinimum": 0,
-                                  "type": "integer"
+                        "rf": {
+                            "description": "Модель Random Forest",
+                            "params_schema": {
+                                "properties": {
+                                    "n_estimators": {
+                                        "anyOf": [
+                                            {
+                                                "exclusiveMinimum": 0,
+                                                "type": "integer"
+                                            },
+                                            {
+                                                "type": "null"
+                                            }
+                                        ],
+                                        "default": 100,
+                                        "description": "Количество деревьев",
+                                        "title": "N Estimators"
+                                    },
+                                    "max_depth": {
+                                        "anyOf": [
+                                            {
+                                                "exclusiveMinimum": 0,
+                                                "type": "integer"
+                                            },
+                                            {
+                                                "type": "null"
+                                            }
+                                        ],
+                                        "default": 10,
+                                        "description": "Максимальная глубина дерева",
+                                        "title": "Max Depth"
+                                    },
+                                    "random_state": {
+                                        "default": 42,
+                                        "description": "Сид генератора случайных чисел",
+                                        "title": "Random State",
+                                        "type": "integer"
+                                    }
                                 },
-                                {
-                                  "type": "null"
-                                }
-                              ],
-                              "default": 100,
-                              "description": "Количество деревьев",
-                              "title": "N Estimators"
-                            },
-                            "max_depth": {
-                              "anyOf": [
-                                {
-                                  "exclusiveMinimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
-                              "default": 10,
-                              "description": "Максимальная глубина дерева",
-                              "title": "Max Depth"
-                            },
-                            "random_state": {
-                              "default": 42,
-                              "description": "Сид генератора случайных чисел",
-                              "title": "Random State",
-                              "type": "integer"
+                                "title": "RandomForestParams",
+                                "type": "object"
                             }
-                          },
-                          "title": "RandomForestParams",
-                          "type": "object"
                         }
-                      }
                     }
-
                 }
             }
         }
@@ -453,10 +538,9 @@ async def retrain_model_endpoint(model_name: str = Query(..., description="Им�
 )
 async def get_available_models():
     """
-    Эндпоинт для получения списка доступных моделей, их описания и схемы параметров.
-    Возвращает словарь, где ключ — это имя модели,
-    а значение содержит описание и параметры, которые можно передать при обучении.
+    Эндпоинт для получения списка доступных моделей с описанием и схемой параметров.
     """
+    logging.info("Получен запрос на список доступных моделей.")
     available = {}
     for model_type, handler_cls in MODEL_REGISTRY.items():
         available[model_type] = {
@@ -492,19 +576,23 @@ async def list_models():
     """
     Эндпоинт для получения списка всех обученных моделей из папки models.
     """
+    logging.info("Получен запрос на список обученных моделей.")
     models_dir = 'models'
     if not os.path.exists(models_dir):
-        raise HTTPException(status_code=404, detail="Папка моделей не найдена.")
-
+        err = "Папка моделей не найдена."
+        logging.error(err)
+        raise HTTPException(status_code=404, detail=err)
     try:
-        # Получаем только файлы (если в папке могут быть и другие папки, их можно исключить)
         models = [
             model for model in os.listdir(models_dir)
             if os.path.isfile(os.path.join(models_dir, model))
         ]
+        logging.info("Найдено %d моделей.", len(models))
         return {"models": models}
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Ошибка получения списка моделей.")
+        err = "Ошибка получения списка моделей."
+        logging.error("%s: %s", err, str(e))
+        raise HTTPException(status_code=500, detail=err)
 
 
 @app.delete(
@@ -526,20 +614,27 @@ async def list_models():
         500: {"description": "Ошибка при удалении модели"}
     }
 )
-async def delete_model_endpoint(model_name: str):
+async def delete_model_endpoint(model_name: str = Query(..., description="Имя модели для удаления", example="rf_20250213_042111.pkl")):
     """
-    Эндпоинт для удаления файла модели.
+    Эндпоинт для удаления модели.
+
     Принимает model_name в query-параметре.
     """
+    logging.info("Получен запрос на удаление модели: %s", model_name)
     model_path = os.path.join("models", model_name)
     if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail=f"Модель '{model_name}' не найдена.")
+        err = f"Модель '{model_name}' не найдена."
+        logging.error(err)
+        raise HTTPException(status_code=404, detail=err)
 
     try:
         os.remove(model_path)
+        logging.info("Модель '%s' успешно удалена.", model_name)
         return {"detail": f"Модель '{model_name}' успешно удалена."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при удалении модели: {str(e)}")
+        err = f"Ошибка при удалении модели: {str(e)}"
+        logging.error(err)
+        raise HTTPException(status_code=500, detail=err)
 
 
 @app.get(
@@ -566,10 +661,15 @@ async def delete_model_endpoint(model_name: str):
 async def health_check():
     """
     Эндпоинт для проверки состояния системы.
+
     Возвращает информацию о загрузке CPU, памяти и дискового пространства.
     """
+    logging.info("Получен запрос HealthCheck.")
     health_data = check_system_health()
+    logging.info("HealthCheck: %s", health_data)
     return {"health": health_data}
 
+
 if __name__ == "__main__":
+    logging.info("Запуск FastAPI-сервиса на порту 8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
