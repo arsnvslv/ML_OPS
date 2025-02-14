@@ -116,3 +116,11 @@ poetry run python client.py
 
 - **FastAPI:** Логи записываются в файл `fastapi_app.log` и выводятся в консоль.
 - **gRPC:** Логирование осуществляется с использованием стандартного модуля `logging`
+
+## Streamlit
+
+В dashboard.py лежит код для простого EDA для titanic/titanic.csv  
+Для запуска выполняем 
+```bash
+poetry run streamlit run dashboard.py
+```
