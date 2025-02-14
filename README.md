@@ -123,3 +123,5 @@ poetry run python client.py
 ```bash
 poetry run streamlit run dashboard.py
 ```
+
+**Во втором ДЗ добавлен docker с DVC (для этого я поменял логику сервиса. Теперь он сначала принимает датасет который отправляется в Minio и уже при обучении модели подгружается через DVC). Также добавил простой MLflow внутри контейнера c FastApi.***
