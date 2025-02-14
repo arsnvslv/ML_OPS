@@ -15,6 +15,8 @@ from dvc_service import dvc_add_push, dvc_pull, run_dvc_command
 
 import uvicorn
 
+import mlflow
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -182,6 +184,9 @@ async def upload_data_endpoint(file: UploadFile = File(...)):
         }
     }
 )
+@app.post(
+    "/train/{model_type}",
+)
 async def train_model_endpoint(
     model_type: str = Path(
         ...,
@@ -193,27 +198,28 @@ async def train_model_endpoint(
     """
     Эндпоинт для обучения модели.
 
-    **Гиперпараметры** передаются через query (напр. `?n_estimators=200&max_depth=5`).
-    **Тело** запроса содержит только `{"dvc_key": "..."}`,
-    т.е. путь к .dvc-файлу в Minio, где лежит датасет.
+    **Шаги**:
+    1) Получаем гиперпараметры из query (request.query_params).
+    2) Из тела берем {"dvc_key": "..."} и подтягиваем датасет через DVC + Minio.
+    3) Обучаем модель.
+    4) Логируем гиперпараметры, метрику и модель (артефакт) в MLflow.
     """
     logging.info("Получен запрос на обучение модели типа '%s'", model_type)
 
+    # 1) Проверка типа модели
     if model_type not in MODEL_REGISTRY:
-        err = (
-            f"Тип модели '{model_type}' не поддерживается. "
-            f"Доступные модели: {', '.join(MODEL_REGISTRY.keys())}."
-        )
+        err = f"Тип модели '{model_type}' не поддерживается. Доступные: {', '.join(MODEL_REGISTRY.keys())}"
         logging.error(err)
         raise HTTPException(status_code=400, detail=err)
 
+    # 2) Читаем гиперпараметры из query
     query_params = dict(request.query_params)
-    logging.info(f"Получены query-параметры для гиперпараметров: {query_params}")
+    logging.info(f"Получены query-параметры: {query_params}")
 
     handler_cls = MODEL_REGISTRY[model_type]
     try:
         validated_params = handler_cls.params_schema(**query_params)
-        logging.info("Гиперпараметры модели успешно валидированы: %s", validated_params.dict())
+        logging.info("Валидированные гиперпараметры: %s", validated_params.dict())
     except ValidationError as e:
         logging.error("Ошибка валидации гиперпараметров: %s", e.errors())
         raise HTTPException(
@@ -221,7 +227,7 @@ async def train_model_endpoint(
             detail={"error": "Ошибка в параметрах модели", "details": e.errors()}
         )
 
-    # Считываем тело запроса -> ждем JSON вида {"dvc_key": "..."}
+    # 3) Считываем тело -> {"dvc_key": "..."}
     try:
         body = await request.json()
         if "dvc_key" not in body:
@@ -229,7 +235,7 @@ async def train_model_endpoint(
             logging.error(err)
             raise HTTPException(status_code=422, detail=err)
         dvc_key = body["dvc_key"]
-        logging.info(f"dvc_key из тела запроса: {dvc_key}")
+        logging.info(f"dvc_key из тела: {dvc_key}")
     except json.JSONDecodeError:
         err = "Некорректный JSON в теле запроса."
         logging.error(err)
@@ -239,14 +245,13 @@ async def train_model_endpoint(
         logging.error(err)
         raise HTTPException(status_code=400, detail=err)
 
+    # 4) Подгружаем датасет через DVC
     try:
-
         clean_datasets_folder()
         local_dvc_file = os.path.join("datasets", os.path.basename(dvc_key))
 
         download_from_s3(dvc_key, local_dvc_file)
-        logging.info(f".dvc файл скачан: {dvc_key} -> {local_dvc_file}")
-
+        logging.info(f".dvc файл скачан из Minio: {dvc_key} -> {local_dvc_file}")
 
         run_dvc_command(["dvc", "pull"])
         dataset_path = local_dvc_file.replace(".dvc", "")
@@ -265,7 +270,7 @@ async def train_model_endpoint(
             logging.error(err)
             raise HTTPException(status_code=422, detail=err)
 
-        logging.info(f"Датасет успешно загружен и валидирован. Кол-во строк: {len(df)}")
+        logging.info(f"Датасет успешно загружен. {len(df)} строк.")
 
     except ValidationError as e:
         logging.error("Ошибка валидации датасета: %s", e.errors())
@@ -280,19 +285,50 @@ async def train_model_endpoint(
         logging.error(err)
         raise HTTPException(status_code=500, detail=err)
 
+    # 5) Обучаем модель и логируем в MLflow
     model = handler_cls()
     try:
-        result = model.train(df, validated_params.dict())
-        model_prefix = result.get("model_prefix", "model")
-        model_name = model.save_model(model_prefix)
-        result["model_name"] = model_name
-        logging.info("Модель успешно обучена и сохранена под именем: %s", model_name)
+        # Настройка MLflow
+        mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5002")
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment("MyMLProject")  # Название эксперимента
+
+        with mlflow.start_run(run_name=f"Train_{model_type}"):
+            # Логируем гиперпараметры
+            for param_name, param_value in validated_params.dict().items():
+                mlflow.log_param(param_name, param_value)
+
+            # Само обучение
+            result = model.train(df, validated_params.dict())
+
+            # Логируем метрику (если есть, напр. accuracy)
+            if "accuracy" in result:
+                mlflow.log_metric("accuracy", result["accuracy"])
+
+            # Сохраняем кастомную модель (ваш метод):
+            model_prefix = result.get("model_prefix", "model")
+            model_name = model.save_model(model_prefix)  # например, "rf_20250615_123456.pkl"
+            result["model_name"] = model_name
+            logging.info("Модель обучена и сохранена как %s", model_name)
+
+            # Логируем этот файл в MLflow как артефакт
+            model_path = os.path.join("models", model_name)
+            if os.path.exists(model_path):
+                mlflow.log_artifact(model_path, artifact_path="custom_model")
+                logging.info(f"Файл {model_path} залогирован в MLflow как артефакт.")
+            else:
+                logging.warning(f"Файл модели {model_path} не найден, не удалось логировать артефакт.")
+
+        # end of with mlflow.start_run
     except Exception as e:
         err = f"Ошибка при обучении модели: {str(e)}"
         logging.error(err)
         raise HTTPException(status_code=500, detail=err)
+    finally:
+        clean_datasets_folder()
 
     return result
+
 
 
 @app.post(
@@ -315,22 +351,6 @@ async def train_model_endpoint(
         400: {"description": "Некорректный формат запроса или модель не поддерживается"},
         404: {"description": "Модель не найдена"},
         500: {"description": "Ошибка при переобучении"}
-    },
-    openapi_extra={
-        "parameters": [
-            {
-                "in": "query",
-                "name": "model_name",
-                "schema": {"type": "string", "example": "rf_20250213_155448.pkl"},
-                "description": "Имя уже обученной модели, которую хотим переобучить"
-            },
-            {
-                "in": "query",
-                "name": "dvc_key",
-                "schema": {"type": "string", "example": "dvc/updated_data.json.dvc"},
-                "description": "Путь к .dvc-файлу (Minio), где лежат новые данные"
-            }
-        ]
     }
 )
 async def retrain_model_endpoint(
@@ -377,27 +397,52 @@ async def retrain_model_endpoint(
             err = f"Старая модель '{model_name}' не найдена в папке models/"
             raise HTTPException(status_code=404, detail=err)
 
-        model_type = model_name.split("_")[0]  # rf_*, catboost_*, etc
+        model_type = model_name.split("_")[0]  # например, rf_*, catboost_*, etc.
         handler_cls = MODEL_REGISTRY.get(model_type)
         if handler_cls is None:
             err = f"Неизвестный тип модели по имени {model_name}"
             raise HTTPException(status_code=400, detail=err)
 
-        model = handler_cls.load_model(model_name)  # ваш метод в классе
+        # Загружаем модель (метод load_model должен быть реализован в классе)
+        model = handler_cls.load_model(model_name)
         logging.info(f"Модель '{model_name}' загружена для переобучения.")
 
-        # 4) Переобучаем
+        # 4) Подготавливаем гиперпараметры для переобучения
         if not hasattr(model, "trained_params") or model.trained_params is None:
-            # Или как у вас логика хранится
             logging.warning("Модель не содержит trained_params, используем дефолт.")
-            model.trained_params = {}  # Или восстановить откуда-то
+            model.trained_params = {}  # Или можно задать дефолтные параметры
 
-        # Переобучение, используя старые/новые параметры
-        result = model.train(df, model.trained_params)
-        new_model_name = model.save_model(model_prefix=model_type)
-        result["model_name"] = new_model_name
-        logging.info(f"Модель переобучена и сохранена под именем: {new_model_name}")
+        # 5) Переобучение с логированием в MLflow
+        mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5002")
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment("MyMLProject")
 
+        with mlflow.start_run(run_name=f"Retrain_{model_name}"):
+            # Логируем гиперпараметры (используем старые параметры модели)
+            for param_name, param_value in model.trained_params.items():
+                mlflow.log_param(param_name, param_value)
+
+            # Переобучаем модель
+            result = model.train(df, model.trained_params)
+
+            # Логируем метрику, если она возвращается (например, accuracy)
+            if "accuracy" in result:
+                mlflow.log_metric("accuracy", result["accuracy"])
+
+            # Сохраняем переобученную модель как новую версию
+            new_model_name = model.save_model(model_prefix=model_type)
+            result["model_name"] = new_model_name
+            logging.info(f"Модель переобучена и сохранена под именем: {new_model_name}")
+
+            # Логируем файл модели как артефакт в MLflow
+            new_model_path = os.path.join("models", new_model_name)
+            if os.path.exists(new_model_path):
+                mlflow.log_artifact(new_model_path, artifact_path="custom_model")
+                logging.info(f"Файл {new_model_path} залогирован в MLflow как артефакт.")
+            else:
+                logging.warning(f"Файл модели {new_model_path} не найден, не удалось логировать артефакт.")
+
+        # Конец блока mlflow
         return result
 
     except Exception as e:

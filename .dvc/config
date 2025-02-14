@@ -1,7 +1,9 @@
 [core]
     remote = myremote
-['remote "myremote"']
+
+[remote "myremote"]
     url = s3://ml-bucket
-    endpointurl = http://localhost:9000
+    endpointurl = http://minio:9000
     access_key_id = admin
     secret_access_key = admin123
+
