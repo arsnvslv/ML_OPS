@@ -18,7 +18,9 @@ dependencies = [
     "grpcio-tools (>=1.70.0,<2.0.0)",
     "googleapis-common-protos (>=1.67.0,<2.0.0)",
     "grpcio-reflection (>=1.70.0,<2.0.0)",
-    "ruff (>=0.9.6,<0.10.0)"
+    "ruff (>=0.9.6,<0.10.0)",
+    "streamlit (>=1.42.0,<2.0.0)",
+    "seaborn (>=0.13.2,<0.14.0)"
 ]
 
 
