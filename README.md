@@ -35,14 +35,13 @@
        -d @titanic/train_data.json
 ```
 
-**Список обученных моделей:**  
-`GET /trained_models`  
+- **Список обученных моделей:**
 Пример:
 ```bash 
 curl -X GET "http://127.0.0.1:8000/trained_models"
 ```
 
-**Предсказание:**  
+- **Предсказание:**  
 `POST /predict`  
 Пример:
 ```bash 
@@ -52,7 +51,7 @@ curl -X POST "http://127.0.0.1:8000/predict?model_name=catboost_20250213_042111.
 
 ```
 
-**Переобучение:**  
+- **Переобучение:**  
 `POST /retrain`  
 Пример:
 ```bash 
@@ -61,21 +60,21 @@ curl -X POST "http://127.0.0.1:8000/retrain?model_name=catboost_20250213_155448.
      -d @titanic/eval_data.json
 ```
 
-**Удаление модели:**  
+- **Удаление модели:**  
 `DELETE /delete_model`  
 Пример:
 ```bash
 curl -X DELETE "http://127.0.0.1:8000/delete_model?model_name=catboost_20250213_155448.pkl"
 ```
 
-**Доступные модели:**  
+- **Доступные модели:**  
 `GET /train/available_models`  
 Пример:
 ```bash
 curl -X GET "http://127.0.0.1:8000/train/available_models"
 ```
 
-**Health-check:**  
+- **Health-check:**  
 `GET /health`  
 Пример:
 ```
